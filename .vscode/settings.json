@@ -1,0 +1,13 @@
+{
+    "python.analysis.stubPath": "./src/stubs",
+    "python.terminal.activateEnvironment": true,
+    "workbench.editor.labelFormat": "short",
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+        "*.js": "${capture}.test.js"
+    },
+    "python.analysis.extraPaths": ["./src"],
+    "python.terminal.useEnvFile": true,
+
+}
+

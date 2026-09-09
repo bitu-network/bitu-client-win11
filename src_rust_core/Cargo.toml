@@ -1,0 +1,19 @@
+[package]
+name = "rust_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rust_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module", "experimental-inspect"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+rand = "0.8"
+geo = "0.28"
+spade = "2.15"
+h3o = "0.6"
+tiff = "0.11.3"
+indicatif = "0.17"
+gdal = "0.16"  # Adjust version to match your environment if needed

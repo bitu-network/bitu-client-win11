@@ -1,0 +1,19 @@
+# System prerequisites (manual install if network packet sniffing is used):
+# npcap-1.88.exe
+
+# Core Web & API
+flask>=3.0.0
+websockets>=12.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Windows System & GUI
+pywin32>=306
+pystray>=0.19.5
+pillow>=10.0.0
+keyboard>=0.13.5
+pylnk3>=0.4.3
+pyperclip>=1.8.0
+
+# CLI & Media
+yt-dlp>=2024.0.0

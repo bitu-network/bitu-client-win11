@@ -1,0 +1,36 @@
+I want to build a minimal proof-of-concept for a decentralized browser-to-node connection.
+
+Goal:
+- A Python script (stun_node.py) runs on one machine anywhere in the world.
+- A completely separate standalone browser file (client.html) runs on another machine.
+- The browser file is NOT served by the Python script.
+- The only proof required initially is that client.html can establish a two-way communication channel with stun_node.py and receive even a single byte of data.
+
+Expected behavior:
+
+stun_node.py:
+1. Starts.
+2. Creates its networking endpoint.
+3. Contacts a public STUN server (Google STUN, Cloudflare STUN, or another reliable public STUN service).
+4. Discovers its own public connection information.
+5. Prints that connection info in the terminal as something I can copy.
+6. Waits for a client connection.
+
+client.html:
+1. Opens independently in the browser.
+2. Does not know the node address beforehand.
+3. Prints in the browser console:
+   "Enter stun_node connection info:"
+4. I paste the connection info manually.
+5. It attempts to establish a connection to that node.
+6. When successful, it prints received data from stun_node.py in the browser console.
+
+Important constraints:
+- Do not serve client.html from Python.
+- Do not focus on chat yet.
+- Do not build a UI yet.
+- The first milestone is only proving a two-way communication channel.
+- The transport mechanism can be chosen pragmatically, but explain why it is chosen.
+- The long-term goal is that the Python node can later stream arbitrary web content/data to the browser and the browser can replace its initial page content with what it receives.
+
+Please design the simplest working prototype first.

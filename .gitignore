@@ -1,0 +1,34 @@
+**/[[]*[]]/
+
+*.lnk
+.firebase/
+
+
+# Rust & Cargo
+/rust_core/target/
+target/
+
+# Python Virtual Environments & Caches
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Maturin & Build Artifacts
+.maturin/
+*.whl
+
+data/*
+!data/README.md
+
+*.xxx.*
+*.XXX.*
+
+*.sqlite
+
+node_modules/
+
+test-results/
+
+*.pid
+*.log
