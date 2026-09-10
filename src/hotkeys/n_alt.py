@@ -1,29 +1,41 @@
 # file: src/hotkeys/n_alt.py
-# Renames selected files using a timestamp derived from their file metadata, adding numeric suffixes to avoid collisions.
 
 import os
+import sys
+from pathlib import Path
 from datetime import datetime
-from apps.explorer import get_active_explorer_info
+from lib.hotkey_context import get_context_fields
 
-folder, selected = get_active_explorer_info()
 
-if not folder or not selected:
-    print("No files selected.")
-    raise SystemExit
+def rename_selected():
+    app, folder_str, selected = get_context_fields("application", "folder_path", "selected_items")
 
-for i, filename in enumerate(selected, start=1):
-    old_path = os.path.join(folder, filename)
+    if app != "explorer.exe" or not folder_str or not selected:
+        print("[n_alt] No active Explorer folder or files selected.")
+        return
 
-    # Get the file's modification time from its metadata
-    file_time = os.path.getmtime(old_path)
-    timestamp = datetime.fromtimestamp(file_time).strftime("%Y%m%d%H%M")
+    folder = Path(folder_str)
 
-    name, ext = os.path.splitext(filename)
+    for i, item_str in enumerate(selected, start=1):
+        filename = Path(item_str).name
+        old_path = folder / filename
 
-    # Avoid collisions when multiple files are selected
-    new_name = f"{timestamp}{'' if i == 1 else f' {i}'}{ext}"
-    new_path = os.path.join(folder, new_name)
+        if not old_path.exists():
+            continue
 
-    os.rename(old_path, new_path)
+        file_time = os.path.getmtime(old_path)
+        timestamp = datetime.fromtimestamp(file_time).strftime("%Y%m%d%H%M")
+        ext = old_path.suffix
 
-    print(f"{filename} -> {new_name}")
+        new_name = f"{timestamp}{'' if i == 1 else f' {i}'}{ext}"
+        new_path = folder / new_name
+
+        try:
+            old_path.rename(new_path)
+            print(f"[n_alt] {filename} -> {new_name}")
+        except Exception as e:
+            print(f"[n_alt] Error renaming {filename}: {e}")
+
+
+if __name__ == "__main__":
+    rename_selected()
