@@ -12,20 +12,56 @@ CF_HDROP = 15
 VK_CONTROL = 0x11
 VK_V = 0x56
 KEYEVENTF_KEYUP = 0x0002
+DROPEFFECT_MOVE = 0x02
 
 user32 = ctypes.windll.user32
 shell32 = ctypes.windll.shell32
+kernel32 = ctypes.windll.kernel32
 
 user32.OpenClipboard.argtypes = [wintypes.HWND]
 user32.OpenClipboard.restype = wintypes.BOOL
 user32.CloseClipboard.restype = wintypes.BOOL
 user32.GetClipboardData.argtypes = [wintypes.UINT]
 user32.GetClipboardData.restype = wintypes.HANDLE
+user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+user32.RegisterClipboardFormatW.restype = wintypes.UINT
 user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_ulonglong]
 user32.keybd_event.restype = None
 
 shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
 shell32.DragQueryFileW.restype = wintypes.UINT
+
+kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalLock.restype = wintypes.LPVOID
+kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+
+def is_cut_operation() -> bool:
+    """Check if the current clipboard payload represents a 'Cut' (Move) operation."""
+    cf_preferred_dropeffect = user32.RegisterClipboardFormatW("Preferred DropEffect")
+    if not cf_preferred_dropeffect:
+        return False
+
+    if not user32.OpenClipboard(None):
+        return False
+
+    try:
+        h_mem = user32.GetClipboardData(cf_preferred_dropeffect)
+        if not h_mem:
+            return False
+
+        p_mem = kernel32.GlobalLock(h_mem)
+        if not p_mem:
+            return False
+
+        try:
+            effect = ctypes.cast(p_mem, ctypes.POINTER(wintypes.DWORD)).contents.value
+            return bool(effect & DROPEFFECT_MOVE)
+        finally:
+            kernel32.GlobalUnlock(h_mem)
+    finally:
+        user32.CloseClipboard()
 
 
 def get_clipboard_files() -> list[Path]:
@@ -80,6 +116,11 @@ def paste_hard_links():
 
     target_dir = Path(folder_path_str)
     if not target_dir.exists():
+        pass_through_native_paste()
+        return
+
+    # Pass through if the clipboard action is a Cut / Move
+    if is_cut_operation():
         pass_through_native_paste()
         return
 
