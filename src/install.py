@@ -1,4 +1,4 @@
-# file: install.py
+# file: src/install.py
 import os
 from pathlib import Path
 import re
@@ -132,7 +132,7 @@ def install_doskey_macros(project_root: Path, venv_python: Path):
 
 
 if __name__ == "__main__":
-    project_root = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parent.parent
     venv_python = setup_virtual_environment(project_root)
     install_startup_hook(project_root, venv_python)
     install_doskey_macros(project_root, venv_python)
