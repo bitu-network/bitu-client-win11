@@ -32,3 +32,5 @@ test-results/
 
 *.pid
 *.log
+
+*.lnk
