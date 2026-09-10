@@ -62,7 +62,7 @@ def require_target_folder() -> Path:
     return folder
 
 
-def redirect_active_explorer(target_path: Path) -> bool:
+def redirect_active_explorer(target_path, hwnd=None):
     """
     Redirects a Windows File Explorer window to the given path.
 
@@ -75,17 +75,17 @@ def redirect_active_explorer(target_path: Path) -> bool:
     try:
         target_path = Path(target_path).resolve()
         shell = win32com.client.Dispatch("Shell.Application")
-        fg_hwnd = win32gui.GetForegroundWindow()
+        target_hwnd = int(hwnd) if hwnd else win32gui.GetForegroundWindow()
 
         explorer_windows = []
         matching_window = None
 
         for window in shell.Windows():
             try:
-                hwnd = int(window.HWND)
+                w_hwnd = int(window.HWND)
                 if window.Document and hasattr(window.Document, "Folder"):
                     explorer_windows.append(window)
-                    if hwnd == fg_hwnd:
+                    if w_hwnd == target_hwnd:
                         matching_window = window
             except Exception:
                 continue

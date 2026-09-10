@@ -3,8 +3,10 @@
 import hashlib
 import os
 from pathlib import Path
+
 from apps.explorer import redirect_active_explorer
 from lib.hotkey_context import get_context_fields
+
 
 def compute_sha256(file_path):
     """Computes the SHA-256 hash of a file to determine its blob address."""
@@ -14,10 +16,10 @@ def compute_sha256(file_path):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
+
 def open_sharded_location():
-    application, _, selected_items = get_context_fields(
+    application, selected_items = get_context_fields(
         "application",
-        "folder_path",
         "selected_items",
     )
 
@@ -54,5 +56,6 @@ def open_sharded_location():
 
     # Open/redirect active Explorer window straight to the exclusive hash directory
     redirect_active_explorer(sharded_dir)
+
 
 open_sharded_location()
