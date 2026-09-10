@@ -21,16 +21,16 @@ def is_process_running(pid: int) -> bool:
     except Exception:
         return False
 
-
+                                                                              
 def start_background_hotkeys(project_root, src_dir):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(src_dir)
     env["PYTHONUNBUFFERED"] = "1"
     try:
         # Launch worker directly to stream hotkey errors to the same terminal
-        hotkeys_script = src_dir / "cli" / "hotkeys" / "start.py"
+        hotkeys_script = src_dir / "service" / "hotkey_engine.py"
         return subprocess.Popen(
-            [sys.executable, str(hotkeys_script), "--worker"],
+            [sys.executable, str(hotkeys_script)],
             cwd=str(project_root),
             env=env,
             stdout=None,
