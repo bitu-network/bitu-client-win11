@@ -7,7 +7,8 @@
         "*.js": "${capture}.test.js"
     },
     "python.analysis.extraPaths": ["./src"],
-    "python.terminal.useEnvFile": true,
+    "python.terminal.useEnvFile": true
 
 }
+
 

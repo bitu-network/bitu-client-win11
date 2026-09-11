@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 TARGET_EXTENSIONS = {".py", ".js", ".ts", ".html", ".css", ".md"}
-EXCLUDE_DIRS = {".git", ".vscode", "__pycache__", "node_modules", "dist", "build"}
+EXCLUDE_DIRS = {".git", ".vscode", ".venv", "venv", "__pycache__", "node_modules", "dist", "build"}
 
 
 def get_comment_syntax(suffix: str, rel_path: str) -> str:
