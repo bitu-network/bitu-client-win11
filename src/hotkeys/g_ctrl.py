@@ -22,6 +22,7 @@ def set_explorer_address_bar():
     drive = Path(folder).anchor
     target_path = f"{drive}-\\"
 
+
     focus_address_bar(target_path)  # type: ignore[arg-type]
 
 
