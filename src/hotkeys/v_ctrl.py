@@ -86,14 +86,21 @@ def get_clipboard_files() -> list[Path]:
         user32.CloseClipboard()
 
 
-def pass_through_native_paste():
-    """Synthesizes Ctrl+V keyup/keydown event for non-file/fallback clipboard pastes."""
-    time.sleep(0.05)  # Brief delay to allow hotkey release state to settle
-    user32.keybd_event(VK_CONTROL, 0, 0, 0)
-    user32.keybd_event(VK_V, 0, 0, 0)
-    user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
-    user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
 
+def pass_through_native_paste():
+    """Posts direct Win32 paste messages to bypass keyboard hook deadlocks."""
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return
+
+    buf = ctypes.create_unicode_buffer(260)
+    user32.GetClassNameW(hwnd, buf, 260)
+
+    # Explorer windows require shell command 0x701D; generic controls take WM_PASTE (0x0302)
+    if buf.value in ("CabinetWClass", "ExploreWClass"):
+        user32.PostMessageW(hwnd, 0x0111, 0x701D, 0)
+    else:
+        user32.SendMessageW(hwnd, 0x0302, 0, 0)
 
 def paste_hard_links():
     if len(sys.argv) < 2:
