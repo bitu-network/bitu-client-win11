@@ -35,11 +35,12 @@ for item in map(Path, selected):
         move_folder_to_concepts(item)
         if os.name == "nt":
             import ctypes
-            ctypes.windll.shell32.SHChangeNotify(0x00001000, 0x0005, str(item.parent), None)
+
+            ctypes.windll.shell32.SHChangeNotify(
+                0x00001000, 0x0005, str(item.parent), None
+            )
     elif item.is_file():
         ext = item.suffix.lower()
-        if not ext and item.name.startswith("."):
-            ext = item.name.lower()
         if ext == ".url":
             url_files.append(item)
     else:
@@ -50,8 +51,6 @@ if url_files:
 
     json_bytes = json.dumps([str(f) for f in url_files]).encode("utf-8")
     env["BITU_URL_FILES_B64"] = base64.b64encode(json_bytes).decode("ascii")
-
-
 
     subprocess.Popen(
         [sys.executable, "-m", "lib.net.vid_download"],
