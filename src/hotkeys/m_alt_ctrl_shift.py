@@ -1,22 +1,26 @@
 # file: src/hotkeys/m_alt_ctrl_shift.py
+# description: diagnostic script with enabled ANSI colors and clean filenames
 
 import os
-import sys
-import webbrowser
+from pathlib import Path
+from lib.hotkey_context import load_context
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+os.system("")  # Enable ANSI color escape sequences in the new Windows console
 
-from config import LOCAL_SERVER
-
-
-def open_globe_page():
-    url = f"{LOCAL_SERVER}/globe/globe.html"
-    webbrowser.open(url)
-    print(f"Opened {url}")
-
+def main():
+    ctx = load_context()
+    
+    print("\033[95m=== HOTKEY CONTEXT DIAGNOSTIC ===\033[0m")
+    print(f"\033[93mApplication:\033[0m   {ctx.get('application')}")
+    print(f"\033[93mWindow Title:\033[0m  {ctx.get('window_title')}")
+    print(f"\033[93mFolder Path:\033[0m   \033[96m{ctx.get('folder_path')}\033[0m")
+    print("\033[93mSelected Items:\033[0m")
+    for item in ctx.get('selected_items', []):
+        filename = Path(item).name
+        print(f"  - \033[92m{filename}\033[0m")
+    print("\033[95m=================================\033[0m")
+    
+    input("\nPress Enter to exit...")
 
 if __name__ == "__main__":
-    open_globe_page()
-
+    main()

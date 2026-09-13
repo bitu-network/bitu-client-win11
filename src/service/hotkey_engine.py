@@ -1,6 +1,8 @@
 # file: src/service/hotkey_engine.py
+# description: robust low-level keyboard hook (WH_KEYBOARD_LL) engine for zero-flicker selective hotkey interception
 
 from __future__ import annotations
+from __main__ import *
 
 import ctypes
 from ctypes import wintypes
@@ -14,7 +16,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 import pythoncom
 import win32api
 import win32con
@@ -26,13 +27,6 @@ from lib.ensures_single_instance import ensure_single_instance
 from project import get_src_root
 
 os.system("")  # enable ansi color escape sequences in windows cmd
-mod_map = {
-    "alt": 0x0001,
-    "ctrl": 0x0002,
-    "shift": 0x0004,
-    "win": 0x0008,
-}
-
 
 @dataclass
 class ActiveContext:
@@ -44,7 +38,7 @@ class ActiveContext:
 def _get_vk_code(key_str: str) -> int:
     key = key_str.lower()
     if len(key) == 1:
-        return win32api.VkKeyScan(key) & 0xFF
+        return ord(key.upper())
     
     special_keys = {
         "f1": win32con.VK_F1, "f2": win32con.VK_F2, "f3": win32con.VK_F3, "f4": win32con.VK_F4,
@@ -56,7 +50,6 @@ def _get_vk_code(key_str: str) -> int:
     return special_keys.get(key, 0)
 
 def get_active_context() -> ActiveContext:
-    """Strictly queries foreground window context without process guesswork."""
     hwnd = win32gui.GetForegroundWindow()
     if not hwnd:
         return ActiveContext()
@@ -87,6 +80,16 @@ def get_active_context() -> ActiveContext:
     return context
 
 
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))
+    ]
+
+
 class HotkeyEngine:
     def __init__(self, scripts_folder: Path):
         self.scripts_folder = Path(scripts_folder)
@@ -94,6 +97,13 @@ class HotkeyEngine:
         self.task_queue = queue.Queue()
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.combo_map = {}
+        self._hook_id = None
+        self._hook_callback = None
+        
+        user32 = ctypes.windll.user32
+        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = ctypes.c_long
+        self._call_next_hook = user32.CallNextHookEx
 
     def load_scripts(self) -> dict:
         combo_map = {}
@@ -101,7 +111,7 @@ class HotkeyEngine:
             parts = f.stem.split("_")
             if parts:
                 key = parts[0].upper()
-                mods = parts[1:]
+                mods = [m.lower() for m in parts[1:]]
                 combo_map[(tuple(sorted(mods)), key)] = f
         return combo_map
 
@@ -135,12 +145,13 @@ class HotkeyEngine:
 
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
 
                 subprocess.Popen(
                     [sys.executable, str(script_path), json.dumps(context_data)],
                     env=env,
                     startupinfo=startupinfo,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
             except Exception as e:
                 err_msg = f"[ERROR] Dispatch failed for {script_path.name}: {e}"
@@ -154,58 +165,79 @@ class HotkeyEngine:
         if script_path:
             self.task_queue.put((mods, key, script_path))
 
+    def _low_level_keyboard_proc(self, nCode, wParam, lParam):
+        if nCode >= 0 and wParam in (win32con.WM_KEYDOWN, win32con.WM_SYSKEYDOWN):
+            kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+            vk = kb.vkCode
+
+            # Check modifier states live from hardware state
+            ctrl_pressed = bool(win32api.GetAsyncKeyState(win32con.VK_CONTROL) & 0x8000)
+            alt_pressed = bool(win32api.GetAsyncKeyState(win32con.VK_MENU) & 0x8000)
+            shift_pressed = bool(win32api.GetAsyncKeyState(win32con.VK_SHIFT) & 0x8000)
+            win_pressed = bool(win32api.GetAsyncKeyState(win32con.VK_LWIN) & 0x8000 or win32api.GetAsyncKeyState(win32con.VK_RWIN) & 0x8000)
+
+            active_mods = []
+            if ctrl_pressed: active_mods.append("ctrl")
+            if alt_pressed: active_mods.append("alt")
+            if shift_pressed: active_mods.append("shift")
+            if win_pressed: active_mods.append("win")
+
+            # Determine key name from vkCode
+            key_name = None
+            if 48 <= vk <= 57 or 65 <= vk <= 90:  # 0-9, A-Z
+                key_name = chr(vk).upper()
+            elif win32con.VK_F1 <= vk <= win32con.VK_F12:
+                key_name = f"f{vk - win32con.VK_F1 + 1}"
+            else:
+                for k, code in {"space": win32con.VK_SPACE, "enter": win32con.VK_RETURN, "tab": win32con.VK_TAB, "esc": win32con.VK_ESCAPE}.items():
+                    if vk == code:
+                        key_name = k.upper()
+                        break
+
+            if key_name:
+                combo_key = (tuple(sorted(active_mods)), key_name)
+                if combo_key in self.combo_map:
+                    self.enqueue_dispatch(active_mods, key_name)
+                    return 1  # Swallow event completely, preventing any default window action or flash
+
+        return self._call_next_hook(self._hook_id, nCode, wParam, lParam)
+
     def start(self):
-            self.combo_map = self.load_scripts()
+        self.combo_map = self.load_scripts()
 
-            print(f"\n\033[95m=== REGISTERED HOTKEYS ({len(self.combo_map)}) ===\033[0m")
-            for (mods, key), script_path in self.combo_map.items():
-                clean_mods = list(dict.fromkeys(mods))
-                combo_str = "+".join(clean_mods + [key]).upper()
-                print(f"  \033[93m{combo_str:<20}\033[0m -> \033[96m{script_path.name}\033[0m")
-            print("\033[95m=================================\033[0m\n")
+        print(f"\n\033[95m=== REGISTERED HOTKEYS ({len(self.combo_map)}) ===\033[0m")
+        for (mods, key), script_path in self.combo_map.items():
+            clean_mods = list(dict.fromkeys(mods))
+            combo_str = "+".join(clean_mods + [key]).upper()
+            print(f"  \033[93m{combo_str:<20}\033[0m -> \033[96m{script_path.name}\033[0m")
+        print("\033[95m=================================\033[0m\n")
 
-            self.worker_thread.start()
+        self.worker_thread.start()
 
-            hotkey_id_map = {}
-            for hk_id, (mods, key) in enumerate(self.combo_map.keys(), start=1):
-                fs_modifiers = 0
-                for m in mods:
-                    fs_modifiers |= mod_map.get(m.lower(), 0)
+        CMPFUNC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        self._hook_callback = CMPFUNC(self._low_level_keyboard_proc)
+        
+        self._hook_id = ctypes.windll.user32.SetWindowsHookExW(
+            win32con.WH_KEYBOARD_LL, self._hook_callback, None, 0
+        )
 
-                vk = _get_vk_code(key)
-                if vk and ctypes.windll.user32.RegisterHotKey(None, hk_id, fs_modifiers, vk):
-                    hotkey_id_map[hk_id] = (mods, key)
-                else:
-                    print(f"\033[91m[!] Failed to register hotkey: {'+'.join(mods)}+{key}\033[0m")
+        if not self._hook_id:
+            print("\033[91m[!] Failed to install WH_KEYBOARD_LL hook.\033[0m")
+            return
 
-            print("[+] Listening for hotkeys via Win32 RegisterHotKey...")
+        print("[+] Listening for hotkeys via WH_KEYBOARD_LL hook...")
 
-            msg = wintypes.MSG()
-            try:
-                while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
-                    if msg.message == win32con.WM_HOTKEY:
-                        hk_id = msg.wParam
-                        if hk_id in hotkey_id_map:
-                            m, k = hotkey_id_map[hk_id]
-                            self.enqueue_dispatch(list(m), k)
-                    ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
-                    ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
-            finally:
-                for hk_id in hotkey_id_map:
-                    ctypes.windll.user32.UnregisterHotKey(None, hk_id)
+        msg = wintypes.MSG()
+        try:
+            while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
+                ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
+        finally:
+            if self._hook_id:
+                ctypes.windll.user32.UnhookWindowsHookEx(self._hook_id)
 
 
 def main():
-    if os.name == "nt":
-        try:
-            kernel32 = ctypes.windll.kernel32
-            h_input = kernel32.GetStdHandle(-10)
-            mode = ctypes.c_uint32()
-            if kernel32.GetConsoleMode(h_input, ctypes.byref(mode)):
-                kernel32.SetConsoleMode(h_input, mode.value & ~0x0040)
-        except Exception:
-            pass
-
     if not ensure_single_instance("hotkey_listener"):
         print("[Hotkey Engine] Instance already running. Exiting.")
         sys.exit(0)
