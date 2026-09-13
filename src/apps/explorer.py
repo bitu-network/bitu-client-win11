@@ -10,6 +10,8 @@ import win32com.client
 import win32con
 import win32gui
 
+_LAST_EXPLORER_CACHE: tuple[Path | None, list[Path]] = (None, [])
+
 
 def _is_mouse_down() -> bool:
     """Returns True if the left or right mouse button is currently held down.
@@ -40,9 +42,10 @@ def _is_hwnd_responsive(hwnd: int) -> bool:
     return res != 0
 
 
-def _query_explorer_com(result_queue: queue.Queue):
+def _query_explorer_com(require_focus: bool, result_queue: queue.Queue):
+    global _LAST_EXPLORER_CACHE
     if _is_mouse_down():
-        result_queue.put((None, []))
+        result_queue.put(_LAST_EXPLORER_CACHE if not require_focus else (None, []))
         return
 
     pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)  # type: ignore[attr-defined]
@@ -50,11 +53,20 @@ def _query_explorer_com(result_queue: queue.Queue):
         fg_hwnd = win32gui.GetForegroundWindow()
         root_fg_hwnd = win32gui.GetAncestor(fg_hwnd, win32con.GA_ROOT) if fg_hwnd else 0
 
-        # Pre-flight checks: Abort immediately if mouse is down or target window is unresponsive
         if root_fg_hwnd and win32gui.GetClassName(root_fg_hwnd) in ("CabinetWClass", "ExploreWClass"):
             if _is_mouse_down() or not _is_hwnd_responsive(root_fg_hwnd):
-                result_queue.put((None, []))
+                result_queue.put(_LAST_EXPLORER_CACHE if not require_focus else (None, []))
                 return
+
+        # Build Z-order lookup list from top to bottom
+        z_order = []
+        win32gui.EnumWindows(lambda hwnd, extra: z_order.append(hwnd), None)
+
+        def get_z_index(hwnd: int) -> int:
+            try:
+                return z_order.index(hwnd)
+            except ValueError:
+                return 999999
 
         shell = win32com.client.Dispatch("Shell.Application")
         matching_candidates = []
@@ -70,7 +82,7 @@ def _query_explorer_com(result_queue: queue.Queue):
                 if not _is_hwnd_responsive(w_hwnd):
                     continue
 
-                if w_hwnd == fg_hwnd or (root_fg_hwnd and w_root == root_fg_hwnd):
+                if not require_focus or w_hwnd == fg_hwnd or (root_fg_hwnd and w_root == root_fg_hwnd):
                     folder_path = (
                         Path(window.Document.Folder.Self.Path)
                         if window.Document and hasattr(window.Document, "Folder")
@@ -82,48 +94,52 @@ def _query_explorer_com(result_queue: queue.Queue):
                             items = window.Document.SelectedItems()
                             if items is not None:
                                 for item in items:
-                                    if getattr(item, "IsLink", False):
-                                        continue
                                     item_path = getattr(item, "Path", None)
                                     if item_path:
                                         selected_items.append(Path(item_path))
                         except Exception:
                             pass
 
-                    matching_candidates.append((folder_path, selected_items))
+                    z_idx = get_z_index(w_hwnd)
+                    matching_candidates.append((z_idx, folder_path, selected_items))
             except Exception as e:
                 print("Explorer detection error:", e)
 
-        for folder_path, selected_items in matching_candidates:
-            if selected_items:
-                result_queue.put((folder_path, selected_items))
-                return
+        # Sort candidates by Z-index (lower index = closer to the top of visual Z-order)
+        matching_candidates.sort(key=lambda x: x[0])
 
         if matching_candidates:
-            result_queue.put(matching_candidates[0])
+            # Always respect the topmost window in Z-order first
+            _, folder_path, selected_items = matching_candidates[0]
+            _LAST_EXPLORER_CACHE = (folder_path, selected_items)
+            result_queue.put((folder_path, selected_items))
+            return
+
+        if not require_focus and _LAST_EXPLORER_CACHE[0] is not None:
+            result_queue.put(_LAST_EXPLORER_CACHE)
             return
 
         result_queue.put((None, []))
     except Exception as e:
         print("Explorer COM lookup error:", e)
-        result_queue.put((None, []))
+        result_queue.put(_LAST_EXPLORER_CACHE if not require_focus else (None, []))
     finally:
         pythoncom.CoUninitialize()
 
 
-def get_active_explorer_info() -> tuple[Path | None, list[Path]]:
+def get_active_explorer_info(require_focus: bool = True) -> tuple[Path | None, list[Path]]:
     if _is_mouse_down():
-        return None, []
+        return _LAST_EXPLORER_CACHE if not require_focus else (None, [])
 
     result_q: queue.Queue = queue.Queue()
-    t = threading.Thread(target=_query_explorer_com, args=(result_q,), daemon=True)
+    t = threading.Thread(target=_query_explorer_com, args=(require_focus, result_q,), daemon=True)
     t.start()
     t.join()
 
     try:
         return result_q.get_nowait()
     except queue.Empty:
-        return None, []
+        return _LAST_EXPLORER_CACHE if not require_focus else (None, [])
 
 
 def get_target_folder() -> Path | None:
