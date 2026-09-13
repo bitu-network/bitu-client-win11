@@ -1,41 +1,99 @@
 # file: src/hotkeys/n_alt.py
-
-import os
+import ctypes
+import json
 import sys
-from pathlib import Path
 from datetime import datetime
-from lib.hotkey_context import get_context_fields
+from pathlib import Path
+
+def get_win32_move_file():
+    """Fallback Win32 move to bypass transient Explorer lock handles."""
+    move = ctypes.windll.kernel32.MoveFileExW
+    move.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    move.restype = ctypes.c_int
+    return move
 
 
-def rename_selected():
-    app, folder_str, selected = get_context_fields("application", "folder_path", "selected_items")
+def get_creation_timestamp(file_path: Path) -> datetime:
+    """Retrieve Windows creation time (ctime), defaulting to current time on failure."""
+    try:
+        return datetime.fromtimestamp(file_path.stat().st_ctime)
+    except Exception:
+        return datetime.now()
 
-    if app != "explorer.exe" or not folder_str or not selected:
-        print("[n_alt] No active Explorer folder or files selected.")
+
+def parse_name_and_ext(file_path: Path) -> tuple[str, str]:
+    """Accurately parse extension and name stem, handling dotfiles (e.g. '.jpg')."""
+    if file_path.is_dir():
+        return file_path.name, ""
+
+    name = file_path.name
+    if name.startswith(".") and name.count(".") == 1:
+        return "", name
+
+    return file_path.stem, file_path.suffix
+
+
+def rename_item(target_path: Path) -> None:
+    target = target_path.resolve()
+    if not target.exists():
         return
 
-    folder = Path(folder_str)
+    dt = get_creation_timestamp(target)
+    timestamp_prefix = dt.strftime("%Y%m%d%H%M%S")
 
-    for i, item_str in enumerate(selected, start=1):
-        filename = Path(item_str).name
-        old_path = folder / filename
+    _, ext = parse_name_and_ext(target)
+    new_name = f"{timestamp_prefix}{ext}"
+    new_path = target.parent / new_name
 
-        if not old_path.exists():
-            continue
+    if target == new_path:
+        return
 
-        file_time = os.path.getmtime(old_path)
-        timestamp = datetime.fromtimestamp(file_time).strftime("%Y%m%d%H%M")
-        ext = old_path.suffix
+    counter = 1
+    while new_path.exists():
+        new_name = f"{timestamp_prefix}_{counter}{ext}"
+        new_path = target.parent / new_name
+        counter += 1
 
-        new_name = f"{timestamp}{'' if i == 1 else f' {i}'}{ext}"
-        new_path = folder / new_name
+    try:
+        target.rename(new_path)
+    except Exception:
+        win32_move = get_win32_move_file()
+        # MOVEFILE_REPLACE_EXISTING (0x1) | MOVEFILE_WRITE_THROUGH (0x8)
+        win32_move(str(target), str(new_path), 0x1 | 0x8)
 
-        try:
-            old_path.rename(new_path)
-            print(f"[n_alt] {filename} -> {new_name}")
-        except Exception as e:
-            print(f"[n_alt] Error renaming {filename}: {e}")
+
+def parse_targets_from_args() -> list[Path]:
+    """Extract path targets from JSON payload or raw CLI arguments."""
+    if len(sys.argv) < 2:
+        return []
+
+    raw_arg = sys.argv[1]
+    targets = []
+
+    try:
+        data = json.loads(raw_arg)
+        if isinstance(data, dict):
+            selected = data.get("selected_items", [])
+            if selected:
+                return [Path(p) for p in selected]
+            
+            folder = data.get("folder_path")
+            if folder:
+                return [Path(folder)]
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Direct CLI invocation fallback
+    for arg in sys.argv[1:]:
+        targets.append(Path(arg.strip('"')))
+
+    return targets
 
 
 if __name__ == "__main__":
-    rename_selected()
+    try:
+        items = parse_targets_from_args()
+        for item in items:
+            rename_item(item)
+    except Exception as e:
+        sys.stderr.write(f"Error: {e}\n")
