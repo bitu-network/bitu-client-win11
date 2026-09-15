@@ -1,8 +1,52 @@
 # file: src/apps/explorer/utils.py
 
+import os
+import sys
+
 import win32api
 import win32con
 import win32gui
+
+_DEBUG = bool(os.environ.get("BITU_EXPLORER_DEBUG"))
+
+# Windows 11 is build 22000+. This package targets Win11's tabbed Explorer
+# specifically (see active_tab.py) and is not expected to work correctly
+# on Windows 10 or earlier.
+_MIN_WIN11_BUILD = 22000
+_warned_unsupported_os = False
+
+
+def _dbg(msg: str) -> None:
+    if _DEBUG:
+        print(f"[explorer DEBUG] {msg}")
+
+
+def is_win11() -> bool:
+    """Best-effort check that we're running on Windows 11 (build 22000+)."""
+    try:
+        return sys.getwindowsversion().build >= _MIN_WIN11_BUILD
+    except Exception:
+        return False
+
+
+def warn_if_unsupported_os() -> None:
+    """Log a one-time warning if this doesn't look like Windows 11.
+
+    This package (src/apps/explorer) targets Windows 11's tabbed File
+    Explorer specifically. It is not designed to support Windows 10 or
+    other platforms -- contributions for those are welcome but out of
+    scope here.
+    """
+    global _warned_unsupported_os
+    if _warned_unsupported_os or is_win11():
+        return
+    _warned_unsupported_os = True
+    print(
+        "[explorer] WARNING: this module targets Windows 11's tabbed File "
+        "Explorer; active-tab detection is not expected to work correctly "
+        "on this OS/build.",
+        file=sys.stderr,
+    )
 
 
 def _is_mouse_down() -> bool:
