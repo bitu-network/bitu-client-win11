@@ -61,8 +61,13 @@ def get_active_context() -> ActiveContext:
         )
         exe = Path(win32process.GetModuleFileNameEx(process, 0)).name.lower()
         title = win32gui.GetWindowText(hwnd)
-    except Exception:
+    except Exception as e:
         exe, title = None, win32gui.GetWindowText(hwnd)
+        if os.environ.get("BITU_EXPLORER_DEBUG"):
+            print(f"[hotkey_engine DEBUG] exe detection failed for hwnd={hwnd} pid={pid}: {e}")
+
+    if os.environ.get("BITU_EXPLORER_DEBUG"):
+        print(f"[hotkey_engine DEBUG] foreground hwnd={hwnd} pid={pid} exe={exe!r} title={title!r}")
 
     context = ActiveContext(application=exe, window_title=title)
 
