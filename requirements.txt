@@ -17,3 +17,6 @@ pyperclip>=1.8.0
 
 # CLI & Media
 yt-dlp>=2024.0.0
+
+# Filesystem Watching
+watchdog>=4.0.0
