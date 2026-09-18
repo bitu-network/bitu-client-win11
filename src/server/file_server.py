@@ -1,4 +1,4 @@
-# file: src/service/file_server.py
+# file: src/server/file_server.py
 # description: per-drive live SHA-256 file index. Scans <drive>:\-\ for files, keeps
 # a sqlite index cached on the OS drive (fast queries) mirrored back onto the drive
 # itself (portability), and serves the index to other BITU services (e.g. a future
