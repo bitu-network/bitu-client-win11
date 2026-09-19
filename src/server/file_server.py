@@ -13,9 +13,15 @@
 #          by exactly <n> raw bytes on the same connection (the [start, end)
 #          slice of the blob), or {"error": "..."} with no bytes following.
 #
-# Launched once per drive by cli/start.py, only for drives with a valid
-# <drive>:\I\-\bitu\config.json (see lib/drives.py). Not meant to be run
-# directly without a drive-letter argument.
+# Auto-discovered and launched once per drive by cli/start.py (any .py file
+# directly under server/ is spawned per drive found by
+# lib/drives.find_bitu_drives(), with the drive letter as its sole argument),
+# only for drives with a valid <drive>:\I\-\bitu\config.json (see lib/drives.py).
+# Lives under server/ rather than service/ specifically because it opens a
+# socket -- process/socket isolation per drive is what makes the mesh-network
+# simulation and sensitive-data isolation goals work; dedupe.py has no such
+# need and runs as one process for every drive instead (see service/dedupe.py).
+# Not meant to be run directly without a drive-letter argument.
 
 from __future__ import annotations
 
