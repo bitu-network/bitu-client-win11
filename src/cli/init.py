@@ -1,36 +1,36 @@
 # file: src/cli/init.py
+# description: interactive setup wizard for turning a drive into a BITU node.
+# Detects the drive of the current working directory, then runs each wizard
+# script under init/ in order, injecting the detected drive root into each
+# via init_globals (so a wizard doesn't need to re-detect it independently).
+#
+# Wizards live in a sibling "init" folder rather than being imported as a
+# python package, since a package directory named "init" would collide with
+# this module's own name (init.py) under normal python import resolution --
+# runpy.run_path() sidesteps that by executing each file directly by path.
+
+from __future__ import annotations
+
 import os
 import runpy
-import sys
 import shutil
 from pathlib import Path
 
 WIZARD_FOLDER = os.path.join(os.path.dirname(__file__), "init")
-POD_FILE = Path.cwd() / ".pod"
 
-# Explicit order of execution
 WIZARD_ORDER = [
-    "pod.py",
-    "keygen.py",
+    "config.py",
 ]
 
-def main():
-    python_exe = sys.executable
 
-    # Check for existing .pod
-    if POD_FILE.exists():
-        while True:
-            choice = input(f"[!] Pod file already exists at {POD_FILE}.\n"
-                           "Do you want to (A)bort or (D)elete and start fresh? [A/D]: ").strip().upper()
-            if choice == "A":
-                print("[i] Aborting initialization.")
-                sys.exit(0)
-            elif choice == "D":
-                POD_FILE.unlink()
-                print(f"[i] Deleted existing pod file: {POD_FILE}")
-                break
-            else:
-                print("[!] Invalid choice. Please enter 'A' or 'D'.")
+def _detect_drive_root() -> Path:
+    """The drive of the terminal's current working directory, e.g. D:\\ ."""
+    return Path(Path.cwd().anchor)
+
+
+def main():
+    drive_root = _detect_drive_root()
+    print(f"[i] Setting up BITU on drive {drive_root}", flush=True)
 
     for filename in WIZARD_ORDER:
         filepath = os.path.join(WIZARD_FOLDER, filename)
@@ -39,13 +39,13 @@ def main():
             continue
 
         print(f"[+] Launching wizard: {filename}")
-        # subprocess.run([python_exe, filepath])
-        runpy.run_path(filepath, run_name="__main__")
+        runpy.run_path(filepath, init_globals={"DRIVE_ROOT": drive_root}, run_name="__main__")
 
         width = shutil.get_terminal_size().columns
-        print("\n" + "|" * width + "\n")  # light horizontal line
+        print("\n" + "|" * width + "\n")
 
-    print("[✓] All wizards completed.")
+    print("[\u2713] All wizards completed.")
+
 
 if __name__ == "__main__":
     main()
