@@ -1,21 +1,21 @@
 # file: src/lib/dedupe_core.py
-
 # description: shared "walk a drive and feed files into the CAS tree" logic, used
 # by both service/dedupe.py (startup reconciliation + live watchdog handler) and
 # cli/dedupe.py (on-demand manual reconciliation). Keeping this here means both
 # callers process a file exactly the same way -- there's only one definition of
-# what "new content" vs "duplicate" means.
+# what "new content" vs "duplicate" means, and of what happens to a duplicate.
 
 from __future__ import annotations
 
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
 from lib.cas import cas_root, find_existing_blob, hash_file, store_new_blob
 
-PENDING_DEDUPE_LOG_REL = Path("I") / "-" / "bitu" / "pending_dedupe.log"
+DEDUPE_LOG_REL = Path("I") / "-" / "bitu" / "dedupe.log"
 
 LogFn = Callable[[str], None]
 
@@ -24,24 +24,50 @@ def _default_log(msg: str) -> None:
     print(f"[dedupe] {msg}", flush=True)
 
 
-def flag_duplicate(drive_root: Path, path: Path, existing_blob: Path, digest: str,
-                    log: LogFn = _default_log) -> None:
-    """Record a true duplicate (same hash, different inode) for confirmation.
-
-    Not auto-replaced with a hardlink -- that's destructive, and there's no
-    confirmation UI yet. A future confirmation flow should consume this log
-    and, on approval, delete `path` and os.link() `existing_blob` in its place.
-    """
-    log_path = drive_root / PENDING_DEDUPE_LOG_REL
+def _record(drive_root: Path, line: str) -> None:
+    log_path = drive_root / DEDUPE_LOG_REL
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as f:
-        f.write(f"{time.time()}\t{digest}\t{path}\t{existing_blob}\n")
-    log(f"duplicate flagged (pending confirmation): {path} == {existing_blob}")
+        f.write(line + "\n")
+
+
+def apply_dedupe(drive_root: Path, path: Path, existing_blob: Path, digest: str,
+                  log: LogFn = _default_log) -> bool:
+    """Replace a genuine duplicate at `path` with a hardlink to the existing CAS
+    blob for its content. Safe to do unconditionally: the hash match already
+    confirms the two are byte-for-byte identical, so nothing is lost.
+
+    Uses link-into-temp-then-atomic-rename rather than unlink-then-link, so a
+    failure partway through never leaves `path` missing -- either the swap
+    fully succeeds, or `path` is left exactly as it was.
+
+    Returns True if the swap succeeded.
+    """
+    tmp_path = path.parent / f".{path.name}.dedupe-{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        os.link(existing_blob, tmp_path)
+        os.replace(tmp_path, path)
+        success = True
+    except OSError as e:
+        success = False
+        log(f"dedupe swap failed for {path}: {e}")
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+    outcome = "replaced" if success else "failed"
+    _record(drive_root, f"{time.time()}\t{outcome}\t{digest}\t{path}\t{existing_blob}")
+    if success:
+        log(f"duplicate replaced with hardlink: {path} -> {existing_blob}")
+    return success
 
 
 def process_file(drive_root: Path, path: Path, log: LogFn = _default_log) -> None:
     """Index a single file: skip if it's already a known hardlink, otherwise
-    hash it and either store it as a new blob or flag it as a duplicate.
+    hash it and either store it as a new blob or automatically dedupe it
+    against an existing one.
     """
     try:
         st = path.stat()
@@ -69,7 +95,7 @@ def process_file(drive_root: Path, path: Path, log: LogFn = _default_log) -> Non
             existing_blob = find_existing_blob(drive_root, digest)
 
     if existing_blob is not None:
-        flag_duplicate(drive_root, path, existing_blob, digest, log=log)
+        apply_dedupe(drive_root, path, existing_blob, digest, log=log)
 
 
 def full_scan(drive_root: Path, scan_root: Path, log: LogFn = _default_log) -> int:
