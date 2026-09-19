@@ -1,26 +1,31 @@
 # file: src/lib/drives.py
-# description: drive enumeration and per-drive BITU config validation, shared by
-# cli/start.py (to decide which drives get a file_server.py spawned) and
-# service/file_server.py (to load its own config once launched).
+# description: drive enumeration for BITU. Config loading/validation lives in
+# lib/config.py -- this module is purely "which drives exist" and "which of
+# them are opted in", re-exporting load_drive_config for callers that only
+# need a drive's config rather than the full enumeration.
 
 from __future__ import annotations
 
-import json
+import ctypes
 import string
 import sys
 from pathlib import Path
 
-CONFIG_REL_PATH = Path("I") / "-" / "bitu" / "config.json"
+from lib.config import load_drive_config
 
-# Required keys for a config to be considered valid enough to start a file_server for.
-REQUIRED_CONFIG_KEYS = ("port",)
+__all__ = [
+    "enumerate_drive_roots",
+    "load_drive_config",
+    "find_bitu_drives",
+    "get_volume_label",
+    "find_drive_by_label",
+]
 
 
 def enumerate_drive_roots() -> list[Path]:
     """Return all currently mounted drive roots. Windows only."""
     if sys.platform != "win32":
         return []
-    import ctypes
 
     bitmask = ctypes.windll.kernel32.GetLogicalDrives()
     roots = []
@@ -30,33 +35,46 @@ def enumerate_drive_roots() -> list[Path]:
     return roots
 
 
-def load_drive_config(drive_root: Path) -> dict | None:
-    """Load and validate <drive>:\\I\\-\\bitu\\config.json.
-
-    Returns the parsed config dict if it exists and has the required keys,
-    otherwise None. The absence of a valid config is the intended mechanism
-    for opting a drive out of running a file_server -- not an error.
+def get_volume_label(drive_root: Path) -> str | None:
+    """The drive's volume label (e.g. "backup", "bitu_test_drive"), or None if
+    it can't be read (unready media, no label set, etc).
     """
-    config_path = drive_root / CONFIG_REL_PATH
-    try:
-        if not config_path.is_file():
-            return None
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # OSError covers unready/removed media (e.g. an empty optical drive);
-        # ValueError covers malformed JSON. Both mean "treat as absent".
+    if sys.platform != "win32":
         return None
 
-    if not isinstance(data, dict):
+    kernel32 = ctypes.windll.kernel32
+    vol_name_buf = ctypes.create_unicode_buffer(1024)
+    fs_name_buf = ctypes.create_unicode_buffer(1024)
+    serial = ctypes.c_uint(0)
+    max_len = ctypes.c_uint(0)
+    flags = ctypes.c_uint(0)
+    ok = kernel32.GetVolumeInformationW(
+        ctypes.c_wchar_p(str(drive_root)),
+        vol_name_buf, ctypes.sizeof(vol_name_buf),
+        ctypes.byref(serial), ctypes.byref(max_len), ctypes.byref(flags),
+        fs_name_buf, ctypes.sizeof(fs_name_buf),
+    )
+    if not ok:
         return None
-    if not all(key in data for key in REQUIRED_CONFIG_KEYS):
-        return None
-    return data
+    return vol_name_buf.value or None
+
+
+def find_drive_by_label(label: str) -> Path | None:
+    """Return the root of the first currently mounted drive whose volume label
+    matches `label` (case-insensitive), or None if no such drive is mounted.
+    """
+    target = label.strip().lower()
+    for root in enumerate_drive_roots():
+        vol_label = get_volume_label(root)
+        if vol_label and vol_label.strip().lower() == target:
+            return root
+    return None
 
 
 def find_bitu_drives() -> list[tuple[Path, dict]]:
     """Return (drive_root, config) for every currently mounted drive that has
-    a valid BITU config -- i.e. every drive that should get a file_server."""
+    a valid BITU config -- i.e. every drive that should get a dedupe/file_server
+    pair spawned."""
     result = []
     for root in enumerate_drive_roots():
         config = load_drive_config(root)

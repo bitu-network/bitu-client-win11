@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 from pathlib import Path
 
 CAS_ROOT_REL = Path("o")  # <drive>:\o\
@@ -63,6 +64,24 @@ def store_new_blob(drive_root: Path, digest: str, source_path: Path) -> Path:
     ext = source_path.suffix  # includes leading '.', or '' if the file has none
     dest = blob_dir / f"content{ext}"
     os.link(source_path, dest)
+    return dest
+
+
+def copy_new_blob(drive_root: Path, digest: str, source_path: Path) -> Path:
+    """Copy source_path's bytes into the CAS tree as a new blob for this hash.
+
+    Use this instead of store_new_blob() when source_path lives on a
+    different volume than drive_root -- hardlinks can't span volumes, so this
+    performs an actual byte copy instead. Otherwise behaves the same:
+    raises FileExistsError if a blob for this hash already exists.
+    """
+    blob_dir = blob_dir_for_hash(drive_root, digest)
+    blob_dir.mkdir(parents=True, exist_ok=True)
+    ext = source_path.suffix
+    dest = blob_dir / f"content{ext}"
+    if dest.exists():
+        raise FileExistsError(dest)
+    shutil.copyfile(source_path, dest)
     return dest
 
 
