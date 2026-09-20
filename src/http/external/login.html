@@ -1,0 +1,324 @@
+<!-- file: src/http/external/login.html -->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <meta charset="utf-8">
+
+    <title>
+        BITU Login
+    </title>
+
+    <link rel="stylesheet" href="style.css">
+
+</head>
+
+
+<body>
+
+
+<h1>
+    BITU
+</h1>
+
+
+<p>
+    Bits I Trust You
+</p>
+
+
+<h2>
+    Login
+</h2>
+
+
+<button id="connectButton">
+    Connect Wallet
+</button>
+
+
+<button id="signButton" disabled>
+    Sign Login Message
+</button>
+
+
+<pre id="message"></pre>
+
+
+<p id="status">
+    Waiting for wallet...
+</p>
+
+
+
+<script type="module">
+
+
+let provider = null;
+let address = null;
+let siweMessage = null;
+
+
+
+const connectButton =
+    document.getElementById(
+        "connectButton"
+    );
+
+
+const signButton =
+    document.getElementById(
+        "signButton"
+    );
+
+
+const status =
+    document.getElementById(
+        "status"
+    );
+
+
+const messageBox =
+    document.getElementById(
+        "message"
+    );
+
+
+
+
+
+async function findWallet() {
+
+
+    /*
+        EIP-6963 wallet discovery.
+
+        Multiple wallets can announce themselves.
+        We don't choose a wallet.
+        The user chooses.
+    */
+
+
+    const wallets = [];
+
+
+    window.addEventListener(
+        "eip6963:announceProvider",
+        event => {
+
+            wallets.push(
+                event.detail
+            );
+
+        }
+    );
+
+
+    window.dispatchEvent(
+        new Event(
+            "eip6963:requestProvider"
+        )
+    );
+
+
+    await new Promise(
+        resolve =>
+            setTimeout(
+                resolve,
+                500
+            )
+    );
+
+
+    if (
+        wallets.length === 0
+    ) {
+
+        throw new Error(
+            "No compatible wallet found"
+        );
+
+    }
+
+
+    /*
+        Temporary:
+        use first discovered wallet.
+
+        Later replace with
+        a wallet selection UI.
+    */
+
+    return wallets[0].provider;
+
+}
+
+
+
+
+
+connectButton.onclick =
+async () => {
+
+
+    try {
+
+
+        provider =
+            await findWallet();
+
+
+
+        const accounts =
+            await provider.request({
+
+                method:
+                    "eth_requestAccounts"
+
+            });
+
+
+
+        address =
+            accounts[0];
+
+
+
+        status.textContent =
+            "Connected: "
+            + address;
+
+
+
+        signButton.disabled =
+            false;
+
+
+
+    }
+    catch(error) {
+
+
+        status.textContent =
+            error.message;
+
+
+    }
+
+
+};
+
+
+
+
+
+
+signButton.onclick =
+async () => {
+
+
+    const domain =
+        window.location.host;
+
+
+    const uri =
+        window.location.origin;
+
+
+
+    const issuedAt =
+        new Date()
+            .toISOString();
+
+
+
+    /*
+        SIWE EIP-4361 style message.
+    */
+
+
+    siweMessage =
+
+`BITU wants you to sign in with your Ethereum account:
+
+${address}
+
+Sign in to BITU.
+
+URI: ${uri}
+Version: 1
+Chain ID: 1
+Nonce: ${crypto.randomUUID()}
+Issued At: ${issuedAt}`;
+
+
+
+    messageBox.textContent =
+        siweMessage;
+
+
+
+    try {
+
+
+        const signature =
+            await provider.request({
+
+                method:
+                    "personal_sign",
+
+                params:
+                    [
+                        siweMessage,
+                        address
+                    ]
+
+            });
+
+
+
+        console.log({
+
+            message:
+                siweMessage,
+
+            signature
+
+        });
+
+
+
+        status.textContent =
+            "Signed successfully";
+
+
+        /*
+            Next step:
+            POST message + signature
+            to Python backend.
+        */
+
+
+    }
+    catch(error) {
+
+
+        status.textContent =
+            error.message;
+
+
+    }
+
+
+};
+
+
+
+</script>
+
+
+</body>
+
+</html>
