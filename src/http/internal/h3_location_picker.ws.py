@@ -1,0 +1,122 @@
+# file: src/http/internal/h3_location_picker.ws.py
+
+import json
+from pathlib import Path
+import h3
+
+from pod.paths import pod_root
+
+
+def common_ancestor(cells):
+    """
+    Find the deepest common H3 ancestor of all cells.
+    """
+
+    if not cells:
+        return None
+
+
+    first = cells[0]
+
+    resolution = h3.get_resolution(first)
+
+
+    for r in range(resolution - 1, -1, -1):
+
+        parent = h3.cell_to_parent(
+            first,
+            r
+        )
+
+
+        if all(
+            h3.cell_to_parent(
+                cell,
+                r
+            ) == parent
+            for cell in cells
+        ):
+            return parent
+
+
+    return h3.cell_to_parent(
+        first,
+        0
+    )
+
+
+
+def ancestor_to_path(ancestor):
+
+    return Path("+") / Path(
+        *list(ancestor)
+    )
+
+
+
+async def on_connect(ws):
+    print("H3 location picker connected")
+
+
+
+async def on_message(ws, msg):
+
+    try:
+
+        data = json.loads(msg)
+
+
+        if data.get("type") != "selection":
+            return
+
+
+        cells = data.get("cells", [])
+        context_path = data.get("context_path")
+
+
+        print("\n--- H3 Selection Received ---")
+        print("context_path:", context_path)
+        print("cells:", cells)
+
+
+        ancestor = common_ancestor(cells)
+
+
+        print("common ancestor:", ancestor)
+
+
+        root = pod_root(
+            Path(context_path)
+        )
+
+
+        location_path = (
+            root
+            /
+            ancestor_to_path(ancestor)
+        )
+
+
+        location_path.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+
+        print("created:", location_path)
+
+
+        print("-----------------------------\n")
+
+
+    except Exception as e:
+
+        print(
+            "Failed to process message:",
+            e
+        )
+
+
+
+async def on_disconnect():
+    print("H3 location picker disconnected")
