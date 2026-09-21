@@ -7,7 +7,7 @@
     "strictNullChecks": false,
     "paths": {
       "/assets/*": [
-        "./src/web/assets/*"
+        "./src/http/assets/*"
       ]
     }
   },

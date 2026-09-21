@@ -152,12 +152,25 @@ class HotkeyEngine:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
 
+                # subprocess.Popen(
+                #     [sys.executable, str(script_path), json.dumps(context_data)],
+                #     env=env,
+                #     startupinfo=startupinfo,
+                #     creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                # )
+                log_fh = open(self.scripts_folder / "script_output.log", "a", encoding="utf-8")
+                log_fh.write(f"\n--- {time.strftime('%H:%M:%S')} {script_path.name} ---\n")
+                log_fh.flush()
                 subprocess.Popen(
                     [sys.executable, str(script_path), json.dumps(context_data)],
                     env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
                     startupinfo=startupinfo,
                     creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
+                log_fh.close()
             except Exception as e:
                 err_msg = f"[ERROR] Dispatch failed for {script_path.name}: {e}"
                 print(err_msg, file=sys.stderr)

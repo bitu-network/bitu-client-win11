@@ -8,7 +8,13 @@ import subprocess
 import sys
 import threading
 
-MAX_GPT_PARTITIONS = 128  # Windows limit for GPT disks
+MAX_GPT_PARTITIONS = 128  # Windows limit per GPT disk
+MAX_MBR_PARTITIONS = 4  # primary partitions on an MBR disk
+MAX_PODS = MAX_GPT_PARTITIONS - 2  # minus the pods volume and the auto-created MSR
+PODS_VOL_MB = 128  # the `pods` volume only holds empty mount-point folders
+# Deliberately does NOT match the `pod_*` label pattern, so this volume is never
+# mistaken for a pod.
+PODS_LABEL = "pods"
 
 
 def is_admin():
@@ -175,27 +181,35 @@ def main():
             print("[-] Refusing to wipe the system/boot disk.")
             sys.exit(1)
 
-        n = int(input("Enter number of partitions (<n>): ").strip())
+        n = int(input("Enter number of pods (<n>): ").strip())
 
         if n < 1:
-            print("[-] Number of partitions must be at least 1.")
+            print("[-] Number of pods must be at least 1.")
             sys.exit(1)
 
-        if n > MAX_GPT_PARTITIONS:
-            print(f"[-] Error: Windows supports at most {MAX_GPT_PARTITIONS} partitions per disk.")
+        if n > MAX_PODS:
+            print(
+                f"[-] Error: at most {MAX_PODS} pods fit on one disk "
+                f"({MAX_GPT_PARTITIONS} partitions minus the pods volume and the reserved partition)."
+            )
             sys.exit(1)
 
         total_size = int(target_drive["Size"])
         min_size_bytes = 100 * 1024 * 1024
+        pods_vol_bytes = PODS_VOL_MB * 1024 * 1024
 
-        if total_size / n < min_size_bytes:
-            print("[-] Error: Too many partitions. Each partition would fall below the safe minimum size.")
+        if (total_size - pods_vol_bytes) / n < min_size_bytes:
+            print("[-] Error: Too many pods. Each pod would fall below the safe minimum size.")
+            sys.exit(1)
+
+        free_letters = get_free_drive_letter_count(selected_id)
+        if free_letters == 0:
+            print("[-] Error: no free drive letter is available for the pods volume.")
             sys.exit(1)
 
         size_gb = total_size / (1024 ** 3)
         name = target_drive["FriendlyName"]
         status = target_drive["OperationalStatus"]
-        free_letters = get_free_drive_letter_count(selected_id)
 
         print("\n" + "!" * 75)
         print("WARNING: THE FOLLOWING PHYSICAL DISK WILL BE COMPLETELY WIPED")
@@ -205,13 +219,9 @@ def main():
         print(f"    Size        : {size_gb:.2f} GB")
         print(f"    Status      : {status}")
         print()
-        print(f"    It will be recreated as {n} NTFS partitions:")
-        print("    " + ", ".join(f"pod_{i}" for i in range(1, n + 1)))
-        if free_letters is not None and free_letters < n:
-            missing = n - free_letters
-            print()
-            print(f"    NOTE: only {free_letters} drive letter(s) are free, so the last {missing}")
-            print("    partition(s) will be created and formatted but get NO drive letter.")
+        print(f"    It will be recreated as 1 volume ({PODS_LABEL}, {PODS_VOL_MB} MB, the only drive")
+        print(f"    letter) plus {n} NTFS pods, each mounted inside it:")
+        print("    " + ", ".join(f"<pods>:\\pod_{i}" for i in range(1, n + 1)))
         print("!" * 75)
 
         confirm = input(
@@ -224,16 +234,19 @@ def main():
 
         print()
 
-        # Uses the Storage cmdlets: clean -> initialise (GPT, falling back to
-        # MBR) -> create + format each partition -> assign drive letters.
-        # Drive letters are assigned AFTER formatting and the Shell Hardware
-        # Detection service (AutoPlay) is paused meanwhile, so Windows doesn't
-        # pop up "format the disk" prompts or open Explorer windows.
+        # Layout: [pods (gets the drive letter)] [pod_1] ... [pod_n]
+        # Every pod is its own NTFS volume with NO drive letter, mounted at
+        # <pods>:\pod_N. Pods are formatted before being mounted and the Shell
+        # Hardware Detection service (AutoPlay) is paused meanwhile, so Windows
+        # doesn't pop up "format the disk" prompts or open Explorer windows.
         ps_script = f"""
         $ErrorActionPreference = 'Stop'
 
         $diskNumber = {selected_id}
         $partitionCount = {n}
+        $podsVolMB = {PODS_VOL_MB}
+        $podsLabel = '{PODS_LABEL}'
+        $sep = [string][char]92
 
         $disk = Get-Disk -Number $diskNumber
 
@@ -245,10 +258,24 @@ def main():
         # Leave room for GPT metadata, the auto-created MSR and alignment.
         $overheadMB = 32 + $partitionCount
         $totalMB = [math]::Floor($disk.Size / 1MB)
-        $partMB = [math]::Floor(($totalMB - $overheadMB) / $partitionCount)
+        $partMB = [math]::Floor(($totalMB - $podsVolMB - $overheadMB) / $partitionCount)
 
         if ($partMB -lt 100) {{
-            throw "The disk is too small for $partitionCount partitions."
+            throw "The disk is too small for $partitionCount pods."
+        }}
+
+        # Pull the volume GUID out of a volume-GUID path (case-insensitive).
+        function Get-Guid($text) {{
+            if ("$text" -match '[{{]([0-9a-fA-F-]+)[}}]') {{
+                return $Matches[1].ToLower()
+            }}
+            return ''
+        }}
+
+        # Ask the mount manager directly what is mounted at a folder
+        # (same lookup as: mountvol <folder> /L).
+        function Get-MountedGuid($path) {{
+            return Get-Guid ((& mountvol.exe ($path + $sep) /L | Out-String))
         }}
 
         # Pause AutoPlay (Shell Hardware Detection) for the duration.
@@ -276,17 +303,30 @@ def main():
                     if ($disk.Size -gt 2TB) {{
                         throw "GPT initialisation failed and the disk is too large for MBR: $gptError"
                     }}
-                    if ($partitionCount -gt 4) {{
-                        throw "GPT initialisation failed and MBR supports at most 4 primary partitions: $gptError"
+                    if ($partitionCount + 1 -gt {MAX_MBR_PARTITIONS}) {{
+                        throw "GPT initialisation failed and MBR allows only {MAX_MBR_PARTITIONS} partitions (pods volume + pods): $gptError"
                     }}
                     Write-Output "WARN|GPT not supported on this disk, using MBR instead"
                     Initialize-Disk -Number $diskNumber -PartitionStyle MBR
                 }}
             }}
 
-            # Create + format (no drive letter yet), then assign the letter.
+            # pods volume: the one partition that gets a drive letter.
+            Write-Output "STEP|Creating $podsLabel volume"
+            $podsPart = New-Partition -DiskNumber $diskNumber -Size ([uint64]($podsVolMB * 1MB))
+            Format-Volume -Partition $podsPart -FileSystem NTFS -NewFileSystemLabel $podsLabel -Confirm:$false | Out-Null
+            Add-PartitionAccessPath -DiskNumber $diskNumber -PartitionNumber $podsPart.PartitionNumber -AssignDriveLetter
+            $podsPart = Get-Partition -DiskNumber $diskNumber -PartitionNumber $podsPart.PartitionNumber
+            if ([int]$podsPart.DriveLetter -eq 0) {{
+                throw "No free drive letter could be assigned to the pods volume."
+            }}
+            $podsLetter = [string]$podsPart.DriveLetter
+            $podsRoot = $podsLetter + ':' + $sep
+            Write-Output "STEP|Pods volume is $($podsLetter):"
+
+            # Pods: create + format (no letter), then mount inside the pods volume.
             for ($i = 1; $i -le $partitionCount; $i++) {{
-                Write-Output "STEP|Creating and formatting pod_$i ($i of $partitionCount)"
+                Write-Output "STEP|Creating pod_$i ($i of $partitionCount)"
 
                 if ($i -eq $partitionCount) {{
                     $part = New-Partition -DiskNumber $diskNumber -UseMaximumSize
@@ -297,18 +337,33 @@ def main():
 
                 Format-Volume -Partition $part -FileSystem NTFS -NewFileSystemLabel "pod_$i" -Confirm:$false | Out-Null
 
-                try {{
-                    Add-PartitionAccessPath -DiskNumber $diskNumber -PartitionNumber $part.PartitionNumber -AssignDriveLetter
-                }}
-                catch {{
-                    Write-Output "WARN|pod_$i was formatted but no drive letter could be assigned"
+                $mountPath = $podsRoot + "pod_$i"
+                New-Item -ItemType Directory -Path $mountPath | Out-Null
+                Add-PartitionAccessPath -DiskNumber $diskNumber -PartitionNumber $part.PartitionNumber -AccessPath $mountPath
+            }}
+
+            # Pods must live only inside the pods volume: drop any drive letter Windows
+            # may have auto-assigned to them.
+            foreach ($p in @(Get-Partition -DiskNumber $diskNumber | Where-Object {{ $_.Type -ne 'Reserved' }})) {{
+                if ($p.PartitionNumber -ne $podsPart.PartitionNumber -and [int]$p.DriveLetter -ne 0) {{
+                    try {{
+                        Remove-PartitionAccessPath -DiskNumber $diskNumber -PartitionNumber $p.PartitionNumber -AccessPath ("$($p.DriveLetter):")
+                    }}
+                    catch {{
+                        Write-Output "WARN|Could not remove the stray drive letter $($p.DriveLetter): from a pod"
+                    }}
                 }}
             }}
 
-            # Final verification (retry: volumes can take a few seconds to appear)
+            # Final verification. Mounts are checked against the mount manager
+            # itself, not the Storage cmdlets' cached AccessPaths, and retried
+            # because volumes and mounts can lag behind for a few seconds.
             Write-Output "STEP|Verifying"
+            $expectedParts = $partitionCount + 1
             $partitions = @()
-            $formatted = @()
+            $pods = @()
+            $podsVols = @()
+            $failed = @()
             for ($try = 0; $try -lt 10; $try++) {{
                 Update-Disk -Number $diskNumber -ErrorAction SilentlyContinue
 
@@ -317,33 +372,53 @@ def main():
                     Get-Partition -DiskNumber $diskNumber -ErrorAction SilentlyContinue |
                     Where-Object {{ $_.Type -ne 'Reserved' }}
                 )
-                $formatted = @(
+                $volumes = @(
                     $partitions |
                     Get-Volume -ErrorAction SilentlyContinue |
-                    Where-Object {{ $_.FileSystem -eq 'NTFS' -and $_.FileSystemLabel -like 'pod_*' }}
+                    Where-Object {{ $_.FileSystem -eq 'NTFS' }}
                 )
+                $pods = @($volumes | Where-Object {{ $_.FileSystemLabel -like 'pod_*' }})
+                $podsVols = @($volumes | Where-Object {{ $_.FileSystemLabel -eq $podsLabel }})
 
-                if ($partitions.Count -eq $partitionCount -and $formatted.Count -eq $partitionCount) {{
-                    break
+                $failed = @()
+                if ($partitions.Count -eq $expectedParts -and $pods.Count -eq $partitionCount -and $podsVols.Count -eq 1) {{
+                    foreach ($v in $pods) {{
+                        $want = Get-Guid ("$($v.UniqueId) $($v.Path)")
+                        $got = Get-MountedGuid ($podsRoot + $v.FileSystemLabel)
+                        if ($want -eq '' -or $got -ne $want) {{
+                            $failed += $v.FileSystemLabel
+                        }}
+                    }}
+                    if ($failed.Count -eq 0) {{
+                        break
+                    }}
                 }}
                 Start-Sleep -Seconds 1
             }}
 
-            if ($partitions.Count -ne $partitionCount) {{
-                throw "Verification failed: expected $partitionCount partitions, found $($partitions.Count)."
+            if ($partitions.Count -ne $expectedParts) {{
+                throw "Verification failed: expected $expectedParts partitions (pods volume + pods), found $($partitions.Count)."
             }}
 
-            if ($formatted.Count -ne $partitionCount) {{
-                throw "Verification failed: expected $partitionCount NTFS pod_* volumes, found $($formatted.Count)."
+            if ($pods.Count -ne $partitionCount -or $podsVols.Count -ne 1) {{
+                throw "Verification failed: expected 1 pods volume and $partitionCount NTFS pod_* volumes, found $($podsVols.Count) and $($pods.Count)."
             }}
 
-            foreach ($p in $partitions) {{
+            if ($failed.Count -gt 0) {{
+                $firstPath = $podsRoot + $failed[0]
+                $raw = (& mountvol.exe ($firstPath + $sep) /L | Out-String).Trim()
+                throw "Verification failed: $($failed.Count) of $partitionCount pods are not mounted inside $($podsLetter): (first: $($failed[0]); mountvol says: $raw). The disk itself was partitioned; inspect it with Disk Management."
+            }}
+
+            foreach ($p in ($partitions | Sort-Object PartitionNumber)) {{
                 $v = $p | Get-Volume -ErrorAction SilentlyContinue
-                $letter = '-'
-                if ([int]$p.DriveLetter -ne 0) {{
-                    $letter = "$($p.DriveLetter):"
+                if ($v.FileSystemLabel -eq $podsLabel) {{
+                    $mount = $podsLetter + ':'
                 }}
-                Write-Output "RESULT|$($p.PartitionNumber)|$($v.FileSystemLabel)|$($p.Size)|$letter|$($v.FileSystem)"
+                else {{
+                    $mount = $podsRoot + $v.FileSystemLabel
+                }}
+                Write-Output "RESULT|$($p.PartitionNumber)|$($v.FileSystemLabel)|$($p.Size)|$mount|$($v.FileSystem)"
             }}
 
             Write-Output "VERIFIED"
@@ -374,16 +449,15 @@ def main():
         if "VERIFIED" not in output:
             raise RuntimeError("PowerShell completed without the expected verification result.")
 
-        print("\n[+] Successfully wiped, partitioned, formatted, and verified the drive!")
+        print("\n[+] Successfully wiped, partitioned, formatted, mounted, and verified the drive!")
 
         if results:
             print()
-            print(f"    {'#':<3} {'Label':<8} {'Size':>11}  {'Drive':<6} FS")
-            print("    " + "-" * 40)
-            for num, label, size, letter, fs in (r[:5] for r in results):
+            print(f"    {'#':<3} {'Label':<9} {'Size':>11}  {'Mounted at':<14} FS")
+            print("    " + "-" * 50)
+            for num, label, size, mount, fs in (r[:5] for r in results):
                 gb = int(size) / (1024 ** 3)
-                shown = letter if letter != "-" else "(none)"
-                print(f"    {num:<3} {label:<8} {gb:>8.2f} GB  {shown:<6} {fs}")
+                print(f"    {num:<3} {label:<9} {gb:>8.2f} GB  {mount:<14} {fs}")
 
     except ValueError:
         print("[-] Please enter a valid numeric value.")

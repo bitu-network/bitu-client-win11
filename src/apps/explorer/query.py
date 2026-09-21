@@ -23,7 +23,10 @@ def _paths_equal(a: Path, b: Path) -> bool:
 
 
 def _query_explorer_com(require_focus: bool, result_queue: queue.Queue):
+    _dbg(f"query: start require_focus={require_focus}")
+
     if _is_mouse_down():
+        _dbg("query: mouse down at start -> returning (None, [])")
         result_queue.put((None, []))
         return
 
@@ -31,9 +34,15 @@ def _query_explorer_com(require_focus: bool, result_queue: queue.Queue):
     try:
         fg_hwnd = win32gui.GetForegroundWindow()
         root_fg_hwnd = win32gui.GetAncestor(fg_hwnd, win32con.GA_ROOT) if fg_hwnd else 0
+        _dbg(f"query: fg_hwnd={fg_hwnd} root_fg_hwnd={root_fg_hwnd}")
 
         if root_fg_hwnd and win32gui.GetClassName(root_fg_hwnd) in ("CabinetWClass", "ExploreWClass"):
-            if _is_mouse_down() or not _is_hwnd_responsive(root_fg_hwnd):
+            if _is_mouse_down():
+                _dbg("query: mouse down before responsiveness check -> returning (None, [])")
+                result_queue.put((None, []))
+                return
+            if not _is_hwnd_responsive(root_fg_hwnd):
+                _dbg(f"query: root_fg_hwnd={root_fg_hwnd} unresponsive -> returning (None, [])")
                 result_queue.put((None, []))
                 return
 
@@ -47,46 +56,70 @@ def _query_explorer_com(require_focus: bool, result_queue: queue.Queue):
         matching_window = None
         fallback_window = None  # first responsive candidate, used only if matching can't resolve one
 
+        try:
+            _dbg(f"query: shell.Windows() count={shell.Windows().Count}")
+        except Exception as e:
+            _dbg(f"query: could not read shell.Windows() count: {e!r}")
+
+        seen = 0
         for window in shell.Windows():
+            seen += 1
             try:
                 if _is_mouse_down():
+                    _dbg("loop: mouse down -> break")
                     break
 
                 w_hwnd = int(window.HWND)
                 w_root = win32gui.GetAncestor(w_hwnd, win32con.GA_ROOT) if w_hwnd else 0
 
                 if not _is_hwnd_responsive(w_hwnd):
+                    _dbg(f"loop: w_hwnd={w_hwnd} unresponsive -> skip")
                     continue
 
-                if not require_focus or w_hwnd == fg_hwnd or (root_fg_hwnd and w_root == root_fg_hwnd):
-                    win_path = None
-                    if window.LocationURL:
-                        parsed = urlparse(window.LocationURL)
-                        if parsed.scheme == "file":
-                            win_path = Path(unquote(parsed.path)).resolve()
+                focus_ok = (
+                    not require_focus
+                    or w_hwnd == fg_hwnd
+                    or (root_fg_hwnd and w_root == root_fg_hwnd)
+                )
+                if not focus_ok:
+                    _dbg(f"loop: w_hwnd={w_hwnd} w_root={w_root} not foreground "
+                         f"({fg_hwnd}/{root_fg_hwnd}) -> skip")
+                    continue
 
-                    win_title = None
-                    try:
-                        if window.Document and hasattr(window.Document, "Folder") and window.Document.Folder:
-                            win_title = window.Document.Folder.Title
-                    except Exception:
-                        pass
+                win_path = None
+                if window.LocationURL:
+                    parsed = urlparse(window.LocationURL)
+                    if parsed.scheme == "file":
+                        win_path = Path(unquote(parsed.path)).resolve()
 
-                    _dbg(f"candidate w_hwnd={w_hwnd} w_root={w_root} LocationURL={window.LocationURL!r} "
-                         f"win_path={win_path} win_title={win_title!r}")
+                win_title = None
+                try:
+                    if window.Document and hasattr(window.Document, "Folder") and window.Document.Folder:
+                        win_title = window.Document.Folder.Title
+                except Exception as e:
+                    _dbg(f"loop: w_hwnd={w_hwnd} could not read Document.Folder.Title: {e!r}")
 
-                    if active_tab_name and win_title and win_title.strip().lower() == active_tab_name.strip().lower():
-                        matching_window = window
-                        break
+                _dbg(f"candidate w_hwnd={w_hwnd} w_root={w_root} LocationURL={window.LocationURL!r} "
+                     f"win_path={win_path} win_title={win_title!r}")
 
-                    if active_tab_path and win_path and _paths_equal(win_path, active_tab_path):
-                        matching_window = window
-                        break
+                if active_tab_name and win_title and win_title.strip().lower() == active_tab_name.strip().lower():
+                    _dbg(f"loop: matched by tab name w_hwnd={w_hwnd}")
+                    matching_window = window
+                    break
 
-                    if fallback_window is None:
-                        fallback_window = window
+                if active_tab_path and win_path and _paths_equal(win_path, active_tab_path):
+                    _dbg(f"loop: matched by tab path w_hwnd={w_hwnd}")
+                    matching_window = window
+                    break
+
+                if fallback_window is None:
+                    fallback_window = window
             except Exception as e:
                 print("Explorer detection error:", e)
+                _dbg(f"loop: exception {e!r}")
+
+        _dbg(f"loop done: seen={seen} matching={matching_window is not None} "
+             f"fallback={fallback_window is not None}")
 
         if not matching_window and fallback_window is not None:
             if active_tab_name or active_tab_path:
@@ -114,17 +147,22 @@ def _query_explorer_com(require_focus: bool, result_queue: queue.Queue):
                                 selected_items.append(Path(item_path))
             except Exception as e:
                 print("Explorer window details error:", e)
+                _dbg(f"details: exception {e!r}")
+        else:
+            _dbg("query: no matching window -> folder_path/selected_items stay empty")
 
         if not folder_path and matching_window:
             try:
                 if matching_window.Document and hasattr(matching_window.Document, "Folder"):
                     folder_path = Path(matching_window.Document.Folder.Self.Path)
-            except Exception:
-                pass
+            except Exception as e:
+                _dbg(f"details: Folder.Self.Path fallback failed: {e!r}")
 
+        _dbg(f"query: result folder_path={folder_path} selected_count={len(selected_items)}")
         result_queue.put((folder_path, selected_items))
     except Exception as e:
         print("Explorer COM lookup error:", e)
+        _dbg(f"query: outer exception {e!r}")
         result_queue.put((None, []))
     finally:
         pythoncom.CoUninitialize()
@@ -132,6 +170,7 @@ def _query_explorer_com(require_focus: bool, result_queue: queue.Queue):
 
 def get_active_explorer_info(require_focus: bool = True) -> tuple[Path | None, list[Path]]:
     if _is_mouse_down():
+        _dbg("get_active_explorer_info: mouse down -> returning (None, [])")
         return (None, [])
 
     result_q: queue.Queue = queue.Queue()
@@ -142,6 +181,7 @@ def get_active_explorer_info(require_focus: bool = True) -> tuple[Path | None, l
     try:
         return result_q.get_nowait()
     except queue.Empty:
+        _dbg("get_active_explorer_info: worker produced no result")
         return (None, [])
 
 

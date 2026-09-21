@@ -31,7 +31,8 @@ import sys
 from pathlib import Path
 
 from lib.cas import cas_root, find_existing_blob
-from lib.drives import load_drive_config
+from pod.config import port_for
+from pod.drives import load_drive_config
 
 FETCH_CHUNK_SIZE = 1024 * 1024
 
@@ -145,7 +146,7 @@ def main():
         print(f"[file_server] No valid config for {drive_root}; exiting.", flush=True)
         sys.exit(0)
 
-    port = config["port"]
+    port = port_for(config, "file_server")
     server = FileServer(("127.0.0.1", port), RequestHandler, drive_root)
     print(f"[file_server] {drive_root} -> 127.0.0.1:{port} serving CAS at {cas_root(drive_root)}",
           flush=True)

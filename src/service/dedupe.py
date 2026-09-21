@@ -28,7 +28,7 @@ from watchdog.observers import Observer
 
 from lib.cas import cas_root
 from lib.dedupe_core import full_scan, process_file
-from lib.drives import find_bitu_drives
+from pod.drives import find_bitu_drives
 
 SCAN_ROOT_REL = Path("-")  # <drive>:\-\
 DRIVE_RESCAN_INTERVAL_SECONDS = 60

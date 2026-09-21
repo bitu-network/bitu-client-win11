@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 from lib.ensures_single_instance import ensure_single_instance
-from lib.drives import find_bitu_drives
+from pod.drives import find_bitu_drives
 from project import get_project_root, get_src_root
 
 
@@ -76,7 +76,7 @@ def main():
         if drives:
             print(f"[+] Found {len(drives)} drive(s) with a BITU config:", flush=True)
         for drive_root, config in drives:
-            print(f"    {drive_root} -> port {config.get('port')}", flush=True)
+            print(f"    {drive_root} -> base_port {config.get('base_port')}", flush=True)
             for script in drive_scripts:
                 print(f"    [+] Starting {script.name} for {drive_root}", flush=True)
                 proc = subprocess.Popen(

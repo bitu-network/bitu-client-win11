@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from lib.dedupe_core import full_scan
-from lib.drives import find_bitu_drives, load_drive_config
+from pod.drives import find_bitu_drives, load_drive_config
 
 
 def _log(msg: str) -> None:
