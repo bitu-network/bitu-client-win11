@@ -1,4 +1,4 @@
-# file: WHITEPAPER.md
+# file: docs/WHITEPAPER.md
 # BITU: A Disk-Portable Mesh Network with Trust-Based Data Currency
 
 **Working draft v0.1 — design rationale, not a finished protocol specification.**
