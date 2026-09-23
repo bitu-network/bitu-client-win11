@@ -49,7 +49,9 @@ def _log(msg: str) -> None:
 
 def _find_backup_drives() -> list[Path]:
     result = []
-    for root in enumerate_drive_roots():
+    # Letter-only, on purpose: pods nested inside a disk are mesh-simulation
+    # test data -- never backed up, never used as a backup target.
+    for root in enumerate_drive_roots(nested=False):
         label = get_volume_label(root)
         if label and label.strip().lower().startswith("backup"):
             result.append(root)
@@ -91,7 +93,7 @@ def _run_once() -> None:
                 continue  # don't treat our own CAS tree as a drive-label folder
 
             drive_label = drive_label_dir.name
-            source_root = find_drive_by_label(drive_label)
+            source_root = find_drive_by_label(drive_label, nested=False)
             if source_root is None:
                 _log(f"source drive labeled {drive_label!r} not currently mounted; skipping.")
                 continue

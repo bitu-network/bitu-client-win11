@@ -8,6 +8,8 @@ import shutil
 import sys
 import json
 
+from pod.paths import same_pod
+
 def execute_smart_paste() -> None:
     target_dir = None
     
@@ -79,7 +81,6 @@ def execute_smart_paste() -> None:
         print("[!] No files found in clipboard payload.")
         return
 
-    target_drive = target_dir.drive.upper()
     processed_count = 0
 
     for src_file in clipboard_files:
@@ -96,7 +97,7 @@ def execute_smart_paste() -> None:
                 counter += 1
 
         try:
-            if src_file.drive.upper() == target_drive:
+            if same_pod(src_file, target_dir):
                 target_file.hardlink_to(src_file)
                 print(f"[LINK] {src_file.name} -> {target_dir.name}")
             else:

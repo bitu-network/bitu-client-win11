@@ -1,6 +1,8 @@
 # file: src/pod/paths.py
-# description: where things live on a pod. Each drive (or UNC share) is a pod,
-# so the pod root is simply the drive a path lives on -- no marker file to find.
+# description: where things live on a pod. A pod is a mounted volume: a drive
+# letter (or UNC share), or a volume mounted into a folder of another volume
+# (a pod nested inside a physical disk, e.g. D:\pod_1). The pod root is simply
+# the nearest enclosing mount point of a path -- no marker file to find.
 
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ BLOBS_DIR = "o"
 CONCEPTS_DIR = "-"
 PERSONAL_CONCEPTS_DIR = "I/-"
 PERSONAL_CALENDAR_DIR = "I/t"
+BITU_DIR = "bitu"  # <pod>\I\-\bitu\ : BITU's own per-pod state (config.json, dedupe.log)
 
 
 def _absolute(path: Path) -> Path:
@@ -24,12 +27,35 @@ def _absolute(path: Path) -> Path:
     return Path(os.path.abspath(path))
 
 
+def _is_mount(path: Path) -> bool:
+    """Is `path` the root of a volume: a drive root, a UNC share root, or a
+    folder that another volume is mounted into?"""
+    try:
+        return os.path.ismount(path)
+    except (OSError, ValueError):
+        return False
+
+
 def pod_root(path: Path) -> Path:
-    """The pod a path lives on: its drive root (or UNC share root)."""
-    anchor = _absolute(path).anchor
-    if not anchor:
+    """The pod a path lives on: its nearest enclosing mount point -- a drive
+    root, a UNC share root, or a folder mount such as D:\\pod_1.
+
+    Walks up the path lexically and never resolves it, so the result is always
+    a prefix of the path as given (the drive/mount the user sees is the pod).
+    """
+    p = _absolute(path)
+    if not p.anchor:
         raise FileNotFoundError(f"No pod root found from {path}")
-    return Path(anchor)
+    for candidate in (p, *p.parents):
+        if _is_mount(candidate):
+            return candidate
+    return Path(p.anchor)
+
+
+def same_pod(a: Path, b: Path) -> bool:
+    """True if both paths live on the same pod, i.e. the same volume -- and so
+    the same hardlink domain (NTFS can't hardlink across volumes)."""
+    return pod_root(a) == pod_root(b)
 
 
 def _pod_dir(path: Path, rel: str) -> Path:

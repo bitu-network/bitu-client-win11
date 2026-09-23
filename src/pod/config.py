@@ -1,42 +1,25 @@
 # file: src/pod/config.py
 # description: centralizes everything about the per-drive BITU config file --
-# its location, schema (required/optional keys, defaults), and load/validation
-# logic. Other modules (pod/drives.py, service/dedupe.py, server/file_server.py,
-# cli/*.py) read config through this module rather than parsing config.json
-# themselves, so a new field only needs to be understood in one place.
+# its location, schema (required/optional keys, defaults), and load/save/
+# validation logic. Other modules (pod/drives.py, pod/peers.py,
+# service/dedupe.py, server/file_server.py, cli/*.py) read AND write config
+# through this module rather than touching config.json themselves, so a new
+# field only needs to be understood in one place.
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from .paths import PERSONAL_CONCEPTS_DIR, pod_root
+from .paths import BITU_DIR, PERSONAL_CONCEPTS_DIR, pod_root
 
-CONFIG_REL_PATH = Path(PERSONAL_CONCEPTS_DIR) / "bitu" / "config.json"  # I\-\bitu\config.json
+CONFIG_REL_PATH = Path(PERSONAL_CONCEPTS_DIR) / BITU_DIR / "config.json"  # I\-\bitu\config.json
 
 # Keys a config.json must have to be considered valid enough to opt a drive in.
-REQUIRED_KEYS = ("base_port",)
-
-# Every per-drive socket-based service (server/*.py) derives its port from
-# base_port + a fixed offset, rather than each service needing its own config
-# field. Offsets matching well-known port numbers (80, 443, 21) make a node's
-# ports self-documenting -- base_port=10000 means http is 10080, immediately
-# recognizable. file_server has no real-world standard to overlay, so it just
-# gets a small offset of its own.
-SERVICE_PORT_OFFSETS: dict = {
-    "file_server": 1,
-    "http": 80,
-    "https": 443,
-    "ftp": 21,
-}
-
-
-def port_for(config: dict, service_name: str) -> int:
-    """The port a given per-drive service should bind to, derived from this
-    drive's base_port. Raises KeyError if service_name isn't in
-    SERVICE_PORT_OFFSETS (a typo, or a service that hasn't been added there).
-    """
-    return config["base_port"] + SERVICE_PORT_OFFSETS[service_name]
+#   port: int -- the single TCP port this pod's http server listens on. A pod
+#         is one node in the mesh and needs exactly one port; there is no
+#         per-service port offset scheme.
+REQUIRED_KEYS = ("port",)
 
 
 # Optional keys and their defaults, merged into a valid config after loading.
@@ -44,8 +27,12 @@ def port_for(config: dict, service_name: str) -> int:
 #            <drive>:\I\ folder onto (see service/backup.py). None disables
 #            backups for this drive. A label (not a boolean) so different
 #            drives can target different backup destinations.
+#   peers: list[dict] -- this pod's known peers, each
+#            {"alias": str, "socket": "host:port", "public_key": str | None}.
+#            Managed through pod.peers, never edited directly.
 DEFAULT_VALUES: dict = {
     "backup": None,
+    "peers": [],
 }
 
 
@@ -77,6 +64,26 @@ def load_drive_config(drive_root: Path) -> dict | None:
         return None
 
     return {**DEFAULT_VALUES, **data}
+
+
+def save_drive_config(drive_root: Path, config: dict) -> None:
+    """Persist `config` (as returned by load_drive_config, or that shape)
+    back to the drive's config.json, creating the bitu directory if needed.
+
+    Optional keys still at their default are omitted from the written file --
+    it should only ever record what was actually opted into or changed.
+    Required keys are always written. This is the single place anything
+    (pod.peers included) writes a drive's config, so there's no parallel
+    writer to keep in sync with load_drive_config's schema.
+    """
+    path = config_path(drive_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    to_write = {
+        key: value
+        for key, value in config.items()
+        if key in REQUIRED_KEYS or DEFAULT_VALUES.get(key, object()) != value
+    }
+    path.write_text(json.dumps(to_write, indent=2) + "\n", encoding="utf-8")
 
 
 def pod_config(path: Path) -> dict | None:

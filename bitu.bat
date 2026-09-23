@@ -5,3 +5,4 @@ set "PYTHONPATH=src"
 set "PYTHONUNBUFFERED=1"
 set "BITU_EXPLORER_DEBUG=1"
 "C:\I\-\bitu\bitu-project\.venv\Scripts\python.exe" -m cli.start
+if errorlevel 1 pause

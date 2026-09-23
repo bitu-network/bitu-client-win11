@@ -4,6 +4,7 @@ from pathlib import Path
 
 from apps.explorer import focus_address_bar
 from lib.hotkey_context import get_context_fields
+from pod.paths import CONCEPTS_DIR, pod_root
 
 for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
@@ -19,8 +20,10 @@ def set_explorer_address_bar():
     if app != "explorer.exe" or not folder:
         return
 
-    drive = Path(folder).anchor
-    target_path = f"{drive}-\\"
+    folder_path = Path(folder)
+    if not folder_path.anchor:
+        return  # not a filesystem folder (e.g. "This PC")
+    target_path = f"{pod_root(folder_path) / CONCEPTS_DIR}\\"
 
 
     focus_address_bar(target_path)  # type: ignore[arg-type]

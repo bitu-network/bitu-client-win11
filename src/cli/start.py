@@ -3,8 +3,9 @@
 # service under src/service/ (global services, spawned once with no
 # arguments -- e.g. hotkey_engine.py, backup.py, dedupe.py: none of these
 # need per-drive process isolation) and src/server/ (per-drive services,
-# spawned once per drive found by lib/drives.find_bitu_drives(), with that
-# drive's letter as the sole argument -- currently just file_server.py, which
+# spawned once per pod found by pod/drives.find_bitu_drives() -- a drive or a
+# volume nested inside one, e.g. D:\pod_1 -- with that pod's root path as the
+# sole argument, e.g. external_http_server.py, which
 # needs real process/socket isolation per drive for the mesh-network
 # simulation and sensitive-data isolation goals). Adding a new service means
 # dropping a .py file in the right folder; this file never needs to change
@@ -76,11 +77,11 @@ def main():
         if drives:
             print(f"[+] Found {len(drives)} drive(s) with a BITU config:", flush=True)
         for drive_root, config in drives:
-            print(f"    {drive_root} -> base_port {config.get('base_port')}", flush=True)
+            print(f"    {drive_root} -> port {config.get('port')}", flush=True)
             for script in drive_scripts:
                 print(f"    [+] Starting {script.name} for {drive_root}", flush=True)
                 proc = subprocess.Popen(
-                    [sys.executable, str(script), drive_root.drive],
+                    [sys.executable, str(script), str(drive_root)],
                     cwd=str(project_root),
                     env=env,
                     stdout=None,

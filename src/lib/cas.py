@@ -13,7 +13,9 @@ import os
 import shutil
 from pathlib import Path
 
-CAS_ROOT_REL = Path("o")  # <drive>:\o\
+from pod.paths import BLOBS_DIR
+
+CAS_ROOT_REL = Path(BLOBS_DIR)  # <drive>:\o\
 HASH_CHUNK_SIZE = 1024 * 1024
 
 

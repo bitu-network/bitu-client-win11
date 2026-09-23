@@ -1,25 +1,38 @@
 # file: src/cli/peer/list.py
-import sys
-from pod.peers import get_peer_list
+## bitu peer list
+# Lists the peers configured on the pod the current directory is on.
 
-def print_table(table):
-    headers = ["ALIAS", "PUBKEY", "SOCKET", "TLS", "LAST SEEN"]
-    if not table:
+import sys
+
+from pod.peers import PeerError, list_peers
+
+_HEADERS = ["ALIAS", "SOCKET", "PUBKEY"]
+
+
+def _print_table(peers: list[dict]) -> None:
+    if not peers:
         print("[info] No peers found.")
         return
-    col_widths = [max(len(str(row[i])) for row in table + [headers]) for i in range(len(headers))]
-    header_line = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
-    sep_line = "-+-".join("-"*w for w in col_widths)
-    print(header_line)
-    print(sep_line)
-    for row in table:
-        print(" | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(headers))))
 
-def main():
-    table = get_peer_list()
-    if table is None:
-        sys.exit(1)
-    print_table(table)
+    rows = [[p["alias"], p["socket"], p["public_key"] or "pending"] for p in peers]
+    widths = [max(len(r[i]) for r in rows + [_HEADERS]) for i in range(len(_HEADERS))]
+
+    print(" | ".join(h.ljust(widths[i]) for i, h in enumerate(_HEADERS)))
+    print("-+-".join("-" * w for w in widths))
+    for row in rows:
+        print(" | ".join(row[i].ljust(widths[i]) for i in range(len(_HEADERS))))
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        peers = list_peers()
+    except PeerError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    _print_table(peers)
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

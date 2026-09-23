@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Callable
 
 from lib.cas import cas_root, find_existing_blob, hash_file, store_new_blob
+from pod.paths import BITU_DIR, CONCEPTS_DIR, PERSONAL_CONCEPTS_DIR
 
-DEDUPE_LOG_REL = Path("I") / "-" / "bitu" / "dedupe.log"
+DEDUPE_LOG_REL = Path(PERSONAL_CONCEPTS_DIR) / BITU_DIR / "dedupe.log"
 
 LogFn = Callable[[str], None]
 
@@ -113,4 +114,30 @@ def full_scan(drive_root: Path, scan_root: Path, log: LogFn = _default_log) -> i
         for name in files:
             process_file(drive_root, root_path / name, log=log)
             count += 1
+    return count
+
+
+def scan_root_for(drive_root: Path) -> Path:
+    """<pod>\\-\\ -- the tree whose files get indexed into the pod's CAS."""
+    return drive_root / CONCEPTS_DIR
+
+
+def scan_pod(drive_root: Path, log: LogFn = _default_log) -> int | None:
+    """Reconcile one pod: make sure its CAS root exists, then full_scan() its
+    scan root. Shared by service/dedupe.py (at startup, before it starts
+    watching) and cli/dedupe.py (on demand).
+
+    Returns the number of files processed, or None if the pod has no scan root
+    (nothing to index -- and nothing for a watcher to watch).
+    """
+    scan_root = scan_root_for(drive_root)
+    if not scan_root.is_dir():
+        log(f"scan root {scan_root} does not exist; skipping {drive_root}.")
+        return None
+
+    cas_root(drive_root).mkdir(parents=True, exist_ok=True)
+
+    log(f"scanning {scan_root} ...")
+    count = full_scan(drive_root, scan_root, log=log)
+    log(f"scan of {drive_root} complete ({count} files processed).")
     return count

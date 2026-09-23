@@ -1,21 +1,12 @@
 # file: src/hotkeys/o_ctrl.py
 
-import hashlib
 import os
 from pathlib import Path
 
 from apps.explorer import redirect_active_explorer
+from lib.cas import blob_dir_for_hash, hash_file
 from lib.hotkey_context import get_context_fields
-
-
-def compute_sha256(file_path):
-    """Computes the SHA-256 hash of a file to determine its blob address."""
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for byte_block in iter(lambda: f.read(65536), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest()
-
+from pod.paths import pod_root
 
 def open_sharded_location():
     application, selected_items = get_context_fields(
@@ -37,13 +28,11 @@ def open_sharded_location():
     if selected.suffix.lower() == ".lnk":
         return
 
-    # Compute SHA-256 hash for 2-byte sharding + full hash folder (o/byte1/byte2/hash/)
-    file_hash = compute_sha256(selected)
-    byte1 = file_hash[0:2]
-    byte2 = file_hash[2:4]
-
-    drive_root = Path(selected.anchor)
-    sharded_dir = drive_root / "o" / byte1 / byte2 / file_hash
+    # Content address within the file's own pod: <pod>\o\<byte1>\<byte2>\<hash>\
+    file_hash = hash_file(selected)
+    if file_hash is None:
+        return  # unreadable file
+    sharded_dir = blob_dir_for_hash(pod_root(selected), file_hash)
 
     # If the sharded directory doesn't exist, instantiate it and seed with a hard link
     if not sharded_dir.exists():

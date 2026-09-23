@@ -1,18 +1,28 @@
 # file: src/cli/peer/alias.py
+## bitu peer alias <alias|pubkey> <new_alias>
+# Renames a peer in the config.json of the pod the current directory is on.
+
 import sys
-from pod.peers import set_peer_alias
 
-def main():
-    if len(sys.argv) != 3:
-        print("Usage: biou peer alias <pubkey|alias|truncated_pubkey> <new_alias>")
-        sys.exit(1)
+from pod.peers import PeerError, set_peer_alias
 
-    peer_dir = set_peer_alias(sys.argv[1], sys.argv[2])
-    if not peer_dir:
-        print("[error] Could not set alias.")
-        sys.exit(1)
 
-    print(f"[updated] Alias for {peer_dir.name[:12]}... set to '{sys.argv[2]}'")
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv if argv is None else argv
+    if len(argv) != 3:
+        print("Usage: bitu peer alias <alias|pubkey> <new_alias>", file=sys.stderr)
+        return 1
+
+    ref, new_alias = argv[1], argv[2]
+    try:
+        peer = set_peer_alias(ref, new_alias)
+    except PeerError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"[updated] peer '{ref}' -> '{peer['alias']}'")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
