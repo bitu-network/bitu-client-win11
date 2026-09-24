@@ -1,5 +1,5 @@
 # file: src/hotkeys/s_ctrl_alt.py
-# description: downloads selected Explorer .url shortcuts sequentially using embedded gallery_dl module, keeping console open on errors
+# description: downloads selected Explorer .url shortcuts sequentially using the project's embedded gallery_dl module; auto-advances on success, pauses on error, and halts batch on terminal close
 
 import os
 import subprocess
@@ -23,11 +23,12 @@ def parse_url_file(file_path: Path) -> Optional[str]:
     return None
 
 
-def process_url_file(url_file: Path) -> None:
+def process_url_file(url_file: Path) -> bool:
+    """Processes a single URL shortcut. Returns True to continue batch, False to stop batch."""
     target_url = parse_url_file(url_file)
     if not target_url:
         print(f"Skipping {url_file.name}: No valid 'URL=' line found.")
-        return
+        return True
 
     dest_dir = url_file.parent / url_file.stem
 
@@ -35,10 +36,10 @@ def process_url_file(url_file: Path) -> None:
     print(f"Target URL: {target_url}")
     print(f"Destination: {dest_dir}")
 
-    # -d specifies the root destination path for downloads in gallery-dl
+    # Build clean execution command for cmd.exe without double-quoted string mangling
     cmd = [
         "cmd.exe",
-        "/k",
+        "/c",
         sys.executable,
         "-m",
         "gallery_dl",
@@ -51,22 +52,33 @@ def process_url_file(url_file: Path) -> None:
         cmd,
         creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
     )
-    proc.wait()  # Enforces serial execution
+    status = proc.wait()  # Enforces serial execution
 
-    # Check if download succeeded and created content before removing shortcut
-    if dest_dir.exists() and any(dest_dir.iterdir()):
+    download_succeeded = dest_dir.exists() and any(dest_dir.iterdir())
+
+    if status == 0 and download_succeeded:
         print(f"Successfully downloaded. Removing shortcut: {url_file.name}")
         try:
             url_file.unlink()
         except OSError as e:
             print(f"Failed to remove {url_file.name}: {e}")
-    else:
-        print(f"Download failed or produced no output for {url_file.name}. Preserving shortcut.")
+        return True  # Proceed automatically to the next gallery in batch
+
+    # Handle download failure or manual window termination
+    if not download_succeeded:
+        print(f"Download aborted or failed for {url_file.name}. Preserving shortcut.")
         if dest_dir.exists() and not any(dest_dir.iterdir()):
             try:
                 dest_dir.rmdir()
             except OSError:
                 pass
+
+    # Abort batch processing if window was closed or process returned non-zero exit status
+    if status != 0:
+        print("Terminal window closed or download failed. Halting batch execution.")
+        return False
+
+    return True
 
 
 def main() -> None:
@@ -88,7 +100,10 @@ def main() -> None:
 
     # Process each selected .url file sequentially
     for url_file in url_files:
-        process_url_file(url_file)
+        should_continue = process_url_file(url_file)
+        if not should_continue:
+            print("Batch download cancelled.")
+            break
 
 
 if __name__ == "__main__":
