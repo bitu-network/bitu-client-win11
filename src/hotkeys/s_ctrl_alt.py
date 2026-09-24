@@ -92,13 +92,17 @@ def main() -> None:
         print("No files selected in File Explorer.")
         return
 
-    url_files = [Path(item) for item in selected if Path(item).suffix.lower() == ".url"]
+    # Filter for .url files and sort alphabetically by file name
+    url_files = sorted(
+        [Path(item) for item in selected if Path(item).suffix.lower() == ".url"],
+        key=lambda p: p.name.lower()
+    )
 
     if not url_files:
         print("No .url files selected.")
         return
 
-    # Process each selected .url file sequentially
+    # Process each selected .url file sequentially in alphabetical order
     for url_file in url_files:
         should_continue = process_url_file(url_file)
         if not should_continue:
